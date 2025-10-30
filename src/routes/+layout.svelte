@@ -28,9 +28,9 @@
 				<strong class="has-text-white">Kash</strong> - Smart budgeting with AI predictions
 			</p>
 			<div class="buttons is-centered mt-4">
-				<a href="#privacy" class="button is-small is-outlined has-text-grey-light">Privacy</a>
-				<a href="#terms" class="button is-small is-outlined has-text-grey-light">Terms</a>
-				<a href="#contact" class="button is-small is-outlined has-text-grey-light">Contact</a>
+				<a href="#" class="button is-small is-outlined has-text-grey-light">Privacy</a>
+				<a href="#" class="button is-small is-outlined has-text-grey-light">Terms</a>
+				<a href="#" class="button is-small is-outlined has-text-grey-light">Contact</a>
 			</div>
 		</div>
 	</footer>

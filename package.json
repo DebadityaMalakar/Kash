@@ -28,6 +28,7 @@
 	},
 	"dependencies": {
 		"@firebase/auth": "^1.11.0",
+		"@sveltejs/adapter-netlify": "^5.2.4",
 		"bulma": "^1.0.4",
 		"firebase": "12.4.0",
 		"firebaseui": "^6.1.0"
