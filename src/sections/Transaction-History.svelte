@@ -1,16 +1,39 @@
 <!-- src/components/RecentTransactions.svelte -->
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { auth, db } from '$lib/firebase/firebase'; // Ensure these are correctly imported from your firebase.ts
+    import { auth, db } from '$lib/firebase/firebase';
     import { onAuthStateChanged, type User } from '@firebase/auth';
     import { collection, query, orderBy, limit, onSnapshot, type QuerySnapshot, type DocumentData } from 'firebase/firestore';
-    import { Timestamp } from 'firebase/firestore'; // Import Timestamp for type safety
+    import { Timestamp } from 'firebase/firestore';
+
+    // Props
+    export let userCurrency: string = 'INR'; // Default to Indian Rupees
 
     // Reactive state for this component
     let user: User | null = null;
     let recentTransactions: DocumentData[] = [];
     let isLoading = true;
     let errorMessage: string | null = null;
+
+    // Currency symbols mapping
+    const currencySymbols: { [key: string]: string } = {
+        'USD': '$',
+        'EUR': '€',
+        'GBP': '£',
+        'JPY': '¥',
+        'CAD': 'C$',
+        'AUD': 'A$',
+        'INR': '₹',
+        'CNY': '¥',
+        'CHF': 'CHF',
+        'BTC': '₿',
+        'ETH': 'Ξ'
+    };
+
+    // Get currency symbol for display
+    function getCurrencySymbol(currencyCode: string): string {
+        return currencySymbols[currencyCode] || currencyCode;
+    }
 
     // Helper to format date for display (e.g., "Today", "2 days ago", "Jan 1, 2023")
     function formatRelativeDate(timestamp: Timestamp): string {
@@ -27,13 +50,21 @@
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
-    // Helper to format amount for display (e.g., "+$2,500.00", "-$85.40") and determine CSS class
+    // Helper to format amount for display with dynamic currency symbol
     function formatCurrency(amount: number, type: string): { display: string, class: string } {
         const isExpense = type === 'expense';
         const displaySign = isExpense ? '-' : '+';
-        const formattedAmount = Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const formattedAmount = Math.abs(amount).toLocaleString('en-US', { 
+            minimumFractionDigits: 2, 
+            maximumFractionDigits: 2 
+        });
         const cssClass = isExpense ? 'has-text-danger' : 'has-text-success';
-        return { display: `${displaySign}$${formattedAmount}`, class: cssClass };
+        const currencySymbol = getCurrencySymbol(userCurrency);
+        
+        return { 
+            display: `${displaySign}${currencySymbol}${formattedAmount}`, 
+            class: cssClass 
+        };
     }
 
     onMount(() => {
@@ -81,7 +112,7 @@
 </script>
 
 <div class="box has-background-grey-darker mt-5">
-	<h2 class="title is-4 has-text-white mb-4">Recent Transactions</h2>
+	<h2 class="title is-4 has-text-white mb-4">Recent Transactions ({userCurrency})</h2>
 
 	<div class="table-container">
 		<table class="table is-fullwidth is-hoverable has-background-black">
@@ -128,8 +159,6 @@
 
 <style>
     /* Ensure the styles are scoped or global as needed */
-    /* If this is within a global style context (e.g., app.css), you might not need to repeat them here.
-       Otherwise, ensure they are present or imported. */
     :global(.box.has-background-grey-darker) {
         background-color: #1a1a1a !important;
         border: 1px solid #333;
@@ -155,6 +184,17 @@
     :global(.button.is-warning) {
         background-color: #ff3e00;
         border-color: #ff3e00;
+        color: white;
+    }
+
+    :global(.button.is-warning.is-outlined) {
+        background-color: transparent;
+        border-color: #ff3e00;
+        color: #ff3e00;
+    }
+
+    :global(.button.is-warning.is-outlined:hover) {
+        background-color: #ff3e00;
         color: white;
     }
 </style>

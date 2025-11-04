@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { app, auth } from '$lib/firebase/firebase';
+	import { app, auth, db } from '$lib/firebase/firebase';
 	import { getAuth, onAuthStateChanged, type User } from '@firebase/auth';
+	import { doc, getDoc } from 'firebase/firestore';
 	import Sidebar from '../../sections/Sidebar.svelte';
 	import TransactionHistory from '../../sections/Transaction-History.svelte';
 
@@ -10,19 +11,61 @@
 	let username = 'User';
 	let email = 'No Email';
 	let photoURL = '/favicon.svg';
+	let userCurrency = 'INR'; // Default to Indian Rupees
+
+	// Currency symbols mapping
+	const currencySymbols: { [key: string]: string } = {
+		'USD': '$',
+		'EUR': '€',
+		'GBP': '£',
+		'JPY': '¥',
+		'CAD': 'C$',
+		'AUD': 'A$',
+		'INR': '₹',
+		'CNY': '¥',
+		'CHF': 'CHF',
+		'BTC': '₿',
+		'ETH': 'Ξ'
+	};
+
+	// Get currency symbol for display
+	function getCurrencySymbol(currencyCode: string): string {
+		return currencySymbols[currencyCode] || currencyCode;
+	}
+
+	// Load user currency preference
+	async function loadUserCurrency() {
+		if (!user) return;
+		
+		try {
+			const userDoc = await getDoc(doc(db, 'users', user.uid));
+			if (userDoc.exists()) {
+				const userData = userDoc.data();
+				userCurrency = userData.currency || 'INR'; // Default to INR if not set
+			}
+			// If user doesn't exist in Firestore yet, keep default INR
+		} catch (error) {
+			console.error('Error loading user currency:', error);
+			// Keep default INR on error
+		}
+	}
 
 	// Function to update user info
-	function updateUserInfo(currentUser: User | null) {
+	async function updateUserInfo(currentUser: User | null) {
 		user = currentUser;
 		if (user) {
 			username = user.displayName || 'User';
 			email = user.email || 'No Email';
 			photoURL = user.photoURL || '/favicon.svg';
 			console.log('User info updated:', username);
+			
+			// Load user currency preference
+			await loadUserCurrency();
 		} else {
 			username = 'User';
 			email = 'No Email';
 			photoURL = '/favicon.svg';
+			userCurrency = 'INR'; // Reset to default
 		}
 	}
 
@@ -64,6 +107,9 @@
 						<div class="media-content">
 							<p class="title is-3 has-text-white">Welcome back, {username}! 👋</p>
 							<p class="subtitle is-6 has-text-grey-light">{email}</p>
+							<p class="subtitle is-7 has-text-grey-light">
+								Currency: <span class="has-text-warning">{userCurrency} ({getCurrencySymbol(userCurrency)})</span>
+							</p>
 						</div>
 					</div>
 
@@ -77,14 +123,17 @@
 							<p class="subtitle is-6 has-text-grey-light">Transactions</p>
 						</div>
 						<div class="column">
-							<p class="title is-4 has-text-warning">$245</p>
+							<p class="title is-4 has-text-warning">
+								{getCurrencySymbol(userCurrency)}245
+							</p>
 							<p class="subtitle is-6 has-text-grey-light">Total Spent</p>
 						</div>
 					</div>
 				</div>
 
 				<!-- Transaction History Section -->
-				<TransactionHistory />
+				<!--@ts-ignore-->
+				<TransactionHistory {userCurrency} />
 			</div>
 		</div>
 	</div>

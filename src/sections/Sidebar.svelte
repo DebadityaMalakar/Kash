@@ -4,6 +4,11 @@
 	onMount(() => {
 		// @ts-ignore
 		document.getElementById(window.location.href.split('/').pop()).classList.add('is-active');
+		// @ts-ignore
+		document.getElementById(window.location.href.split("/").pop()).style=`
+		background: #ff6a33;
+		color: #fff !important;
+		`
 	});
 </script>
 
@@ -41,7 +46,7 @@
 
 		<p class="menu-label has-text-white mt-5">Settings</p>
 		<ul class="menu-list">
-			<li><a href="/Profile" class="nav-element has-text-grey-light">Profile</a></li>
+			<li><a id="Profile" href="/Profile" class="nav-element has-text-grey-light">Profile</a></li>
 			<li><a href="/Notifications" class="nav-element has-text-grey-light">Notifications</a></li>
 			<li><a href="/Add-data" class="nav-element has-text-grey-light">Add Data</a></li>
 		</ul>
@@ -53,5 +58,9 @@
 		padding: 6px;
 		margin: 8px;
 		width: calc(100%);
+	}
+	.is-active{
+		background: #ff6a33;
+		color: #fff;
 	}
 </style>

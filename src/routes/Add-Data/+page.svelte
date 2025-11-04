@@ -2,12 +2,13 @@
 	import { onMount } from 'svelte';
 	import { app, auth, db, storage } from '$lib/firebase/firebase';
 	import { getAuth, onAuthStateChanged, type User } from '@firebase/auth';
-	import { collection, addDoc, Timestamp } from 'firebase/firestore';
+	import { collection, addDoc, Timestamp, doc, getDoc } from 'firebase/firestore';
 	import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 	import Sidebar from '../../sections/Sidebar.svelte';
 
 	// User state
 	let user: User | null = null;
+	let userCurrency = 'INR'; // Default to Indian Rupees
 
 	// Manual form state
 	let description = '';
@@ -37,9 +38,49 @@
 		'Other'
 	];
 
+	// Currency symbols mapping
+	const currencySymbols: { [key: string]: string } = {
+		'USD': '$',
+		'EUR': '€',
+		'GBP': '£',
+		'JPY': '¥',
+		'CAD': 'C$',
+		'AUD': 'A$',
+		'INR': '₹',
+		'CNY': '¥',
+		'CHF': 'CHF',
+		'BTC': '₿',
+		'ETH': 'Ξ'
+	};
+
+	// Get currency symbol for display
+	function getCurrencySymbol(currencyCode: string): string {
+		return currencySymbols[currencyCode] || currencyCode;
+	}
+
+	// Load user currency preference
+	async function loadUserCurrency() {
+		if (!user) return;
+		
+		try {
+			const userDoc = await getDoc(doc(db, 'users', user.uid));
+			if (userDoc.exists()) {
+				const userData = userDoc.data();
+				userCurrency = userData.currency || 'INR'; // Default to INR if not set
+			}
+			// If user doesn't exist in Firestore yet, keep default INR
+		} catch (error) {
+			console.error('Error loading user currency:', error);
+			// Keep default INR on error
+		}
+	}
+
 	onMount(() => {
 		const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
 			user = currentUser;
+			if (user) {
+				loadUserCurrency();
+			}
 		});
 		return () => unsubscribe();
 	});
@@ -64,13 +105,14 @@
 				category: category || 'Other',
 				type: transactionType,
 				date: transactionDate ? Timestamp.fromDate(new Date(transactionDate)) : Timestamp.now(),
+				currency: userCurrency, // Save currency with transaction
 				createdAt: Timestamp.now(),
 				updatedAt: Timestamp.now()
 			};
 
 			await addDoc(collection(db, 'users', user.uid, 'transactions'), transactionData);
 
-			successMessage = 'Transaction added successfully!';
+			successMessage = `Transaction added successfully! (Currency: ${getCurrencySymbol(userCurrency)})`;
 			// Reset form
 			description = '';
 			amount = '';
@@ -145,6 +187,7 @@
 						category: row.category || 'Other',
 						type: (parseFloat(row.amount) || 0) >= 0 ? 'income' : 'expense',
 						date: row.date ? Timestamp.fromDate(new Date(row.date)) : Timestamp.now(),
+						currency: userCurrency, // Save currency with imported transactions
 						createdAt: Timestamp.now(),
 						updatedAt: Timestamp.now()
 					};
@@ -162,7 +205,7 @@
 				}
 			}
 
-			successMessage = `Successfully imported ${importedCount} transactions${errorCount > 0 ? `, ${errorCount} failed` : ''}`;
+			successMessage = `Successfully imported ${importedCount} transactions${errorCount > 0 ? `, ${errorCount} failed` : ''} (Currency: ${getCurrencySymbol(userCurrency)})`;
 			selectedFile = null;
 
 			// Reset file input
@@ -202,6 +245,19 @@
 			<div class="column is-9">
 				<div class="box has-background-grey-darker">
 					<h1 class="title is-2 has-text-white mb-6">Add Transaction Data</h1>
+					
+					<!-- Currency Display -->
+					<div class="notification is-info is-light mb-4">
+						<div class="content has-text-centered">
+							<p class="has-text-weight-semibold">
+								Current Currency: <span class="tag is-warning is-medium">{userCurrency} ({getCurrencySymbol(userCurrency)})</span>
+							</p>
+							<p class="is-size-7 has-text-grey">
+								All transactions will be recorded in {userCurrency}. 
+								You can change your preferred currency in your profile settings.
+							</p>
+						</div>
+					</div>
 
 					<!-- Messages -->
 					{#if successMessage}
@@ -239,7 +295,9 @@
 									</div>
 
 									<div class="field">
-										<label class="label has-text-white">Amount</label>
+										<label class="label has-text-white">
+											Amount ({getCurrencySymbol(userCurrency)})
+										</label>
 										<div class="control">
 											<input
 												class="input"
@@ -250,6 +308,9 @@
 												required
 											/>
 										</div>
+										<p class="help has-text-grey-light">
+											Positive for income, negative for expenses
+										</p>
 									</div>
 
 									<div class="field">
@@ -296,7 +357,7 @@
 												type="submit"
 												disabled={isSubmitting}
 											>
-												Add Transaction
+												Add Transaction ({getCurrencySymbol(userCurrency)})
 											</button>
 										</div>
 									</div>
@@ -319,6 +380,9 @@
 										<li><strong>date</strong> (required, YYYY-MM-DD format)</li>
 										<li><strong>category</strong> (optional)</li>
 									</ul>
+									<p class="has-text-warning">
+										<strong>Note:</strong> All imported transactions will be converted to {userCurrency} ({getCurrencySymbol(userCurrency)})
+									</p>
 								</div>
 
 								<div class="field">
@@ -351,7 +415,7 @@
 											on:click={handleCSVImport}
 											disabled={!selectedFile || isImporting}
 										>
-											Import CSV
+											Import CSV ({getCurrencySymbol(userCurrency)})
 										</button>
 									</div>
 								</div>
@@ -475,5 +539,16 @@
 	:global(.notification) {
 		color: white !important;
 		font-family: 'Roboto', 'Arial', sans-serif;
+	}
+
+	/* Currency notification styling */
+	:global(.notification.is-info.is-light) {
+		background-color: rgba(32, 156, 238, 0.1) !important;
+		border: 1px solid #209cee;
+	}
+
+	:global(.tag.is-warning) {
+		background-color: #ff3e00 !important;
+		color: white !important;
 	}
 </style>
