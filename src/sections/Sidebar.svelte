@@ -47,7 +47,7 @@
 		<p class="menu-label has-text-white mt-5">Settings</p>
 		<ul class="menu-list">
 			<li><a id="Profile" href="/Profile" class="nav-element has-text-grey-light">Profile</a></li>
-			<li><a href="/Notifications" class="nav-element has-text-grey-light">Notifications</a></li>
+			<li><a href="#" class="nav-element has-text-grey-light">Notifications</a></li>
 			<li><a href="/Add-data" class="nav-element has-text-grey-light">Add Data</a></li>
 		</ul>
 	</aside>
