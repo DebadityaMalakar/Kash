@@ -38,7 +38,7 @@
 				<a id="Analytics" href="/Analytics" class="nav-element has-text-grey-light">Analytics</a>
 			</li>
 			<li>
-				<a id="Predictions" href="/Predictions" class="nav-element has-text-grey-light"
+				<a id="Predictions" href="#" class="nav-element has-text-grey-light"
 					>Predictions</a
 				>
 			</li>
@@ -48,7 +48,7 @@
 		<ul class="menu-list">
 			<li><a id="Profile" href="/Profile" class="nav-element has-text-grey-light">Profile</a></li>
 			<li><a href="#" class="nav-element has-text-grey-light">Notifications</a></li>
-			<li><a href="/Add-data" class="nav-element has-text-grey-light">Add Data</a></li>
+			<li><a href="/Add-Data" class="nav-element has-text-grey-light">Add Data</a></li>
 		</ul>
 	</aside>
 </div>
