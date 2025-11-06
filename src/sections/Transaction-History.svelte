@@ -153,7 +153,7 @@
 	</div>
 
 	<div class="has-text-centered mt-4">
-		<a href="/transactions" class="button is-warning is-outlined"> View All Transactions </a>
+		<a href="/Transactions" class="button is-warning is-outlined"> View All Transactions </a>
 	</div>
 </div>
 

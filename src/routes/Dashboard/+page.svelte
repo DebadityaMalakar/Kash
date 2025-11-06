@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { app, auth, db } from '$lib/firebase/firebase';
 	import { getAuth, onAuthStateChanged, type User } from '@firebase/auth';
-	import { doc, getDoc } from 'firebase/firestore';
+	import { doc, getDoc, collection, query, where, onSnapshot, type DocumentData } from 'firebase/firestore';
 	import Sidebar from '../../sections/Sidebar.svelte';
 	import TransactionHistory from '../../sections/Transaction-History.svelte';
 
@@ -11,21 +11,19 @@
 	let username = 'User';
 	let email = 'No Email';
 	let photoURL = '/favicon.svg';
-	let userCurrency = 'INR'; // Default to Indian Rupees
+	let userCurrency = 'INR';
+
+	// Dashboard stats
+	let activeBudgets = 0;
+	let totalTransactions = 0;
+	let totalSpent = 0;
+	let isLoading = true;
 
 	// Currency symbols mapping
 	const currencySymbols: { [key: string]: string } = {
-		'USD': '$',
-		'EUR': '€',
-		'GBP': '£',
-		'JPY': '¥',
-		'CAD': 'C$',
-		'AUD': 'A$',
-		'INR': '₹',
-		'CNY': '¥',
-		'CHF': 'CHF',
-		'BTC': '₿',
-		'ETH': 'Ξ'
+		'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥',
+		'CAD': 'C$', 'AUD': 'A$', 'INR': '₹', 'CNY': '¥',
+		'CHF': 'CHF', 'BTC': '₿', 'ETH': 'Ξ'
 	};
 
 	// Get currency symbol for display
@@ -41,13 +39,67 @@
 			const userDoc = await getDoc(doc(db, 'users', user.uid));
 			if (userDoc.exists()) {
 				const userData = userDoc.data();
-				userCurrency = userData.currency || 'INR'; // Default to INR if not set
+				userCurrency = userData.currency || 'INR';
 			}
-			// If user doesn't exist in Firestore yet, keep default INR
 		} catch (error) {
 			console.error('Error loading user currency:', error);
-			// Keep default INR on error
 		}
+	}
+
+	// Load dashboard stats
+	function loadDashboardStats() {
+		if (!user) return;
+
+		isLoading = true;
+
+		// Load active budgets
+		const budgetsRef = collection(db, 'users', user.uid, 'budgets');
+		const activeBudgetsQuery = query(budgetsRef, where('isActive', '==', true));
+
+		const unsubscribeBudgets = onSnapshot(activeBudgetsQuery, 
+			(snapshot) => {
+				activeBudgets = snapshot.size;
+				updateLoadingState();
+			},
+			(error) => {
+				console.error('Error loading budgets:', error);
+				updateLoadingState();
+			}
+		);
+
+		// Load transactions and calculate total spent
+		const transactionsRef = collection(db, 'users', user.uid, 'transactions');
+		
+		const unsubscribeTransactions = onSnapshot(transactionsRef, 
+			(snapshot) => {
+				totalTransactions = snapshot.size;
+				
+				// Calculate total spent (only expenses, not income)
+				const spent = snapshot.docs
+					.map(doc => doc.data())
+					.filter(transaction => transaction.type === 'expense')
+					.reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
+				
+				totalSpent = spent;
+				updateLoadingState();
+			},
+			(error) => {
+				console.error('Error loading transactions:', error);
+				updateLoadingState();
+			}
+		);
+
+		function updateLoadingState() {
+			// Only set loading to false after we have attempted to load both
+			setTimeout(() => {
+				isLoading = false;
+			}, 500);
+		}
+
+		return () => {
+			unsubscribeBudgets();
+			unsubscribeTransactions();
+		};
 	}
 
 	// Function to update user info
@@ -57,15 +109,20 @@
 			username = user.displayName || 'User';
 			email = user.email || 'No Email';
 			photoURL = user.photoURL || '/favicon.svg';
-			console.log('User info updated:', username);
 			
 			// Load user currency preference
 			await loadUserCurrency();
+			// Load dashboard stats
+			loadDashboardStats();
 		} else {
 			username = 'User';
 			email = 'No Email';
 			photoURL = '/favicon.svg';
-			userCurrency = 'INR'; // Reset to default
+			userCurrency = 'INR';
+			activeBudgets = 0;
+			totalTransactions = 0;
+			totalSpent = 0;
+			isLoading = false;
 		}
 	}
 
@@ -114,21 +171,71 @@
 					</div>
 
 					<div class="columns is-mobile has-text-centered mt-5">
+						<!-- Active Budgets -->
 						<div class="column">
-							<p class="title is-4 has-text-warning">3</p>
-							<p class="subtitle is-6 has-text-grey-light">Active Budgets</p>
+							{#if isLoading}
+								<div class="skeleton-loader"></div>
+								<p class="subtitle is-6 has-text-grey-light">Loading...</p>
+							{:else}
+								<p class="title is-4 has-text-warning">{activeBudgets}</p>
+								<p class="subtitle is-6 has-text-grey-light">
+									Active Budget{activeBudgets !== 1 ? 's' : ''}
+								</p>
+							{/if}
 						</div>
+
+						<!-- Total Transactions -->
 						<div class="column">
-							<p class="title is-4 has-text-warning">12</p>
-							<p class="subtitle is-6 has-text-grey-light">Transactions</p>
+							{#if isLoading}
+								<div class="skeleton-loader"></div>
+								<p class="subtitle is-6 has-text-grey-light">Loading...</p>
+							{:else}
+								<p class="title is-4 has-text-warning">{totalTransactions}</p>
+								<p class="subtitle is-6 has-text-grey-light">
+									Transaction{totalTransactions !== 1 ? 's' : ''}
+								</p>
+							{/if}
 						</div>
+
+						<!-- Total Spent -->
 						<div class="column">
-							<p class="title is-4 has-text-warning">
-								{getCurrencySymbol(userCurrency)}245
-							</p>
-							<p class="subtitle is-6 has-text-grey-light">Total Spent</p>
+							{#if isLoading}
+								<div class="skeleton-loader"></div>
+								<p class="subtitle is-6 has-text-grey-light">Loading...</p>
+							{:else}
+								<p class="title is-4 has-text-warning">
+									{getCurrencySymbol(userCurrency)}{totalSpent.toFixed(2)}
+								</p>
+								<p class="subtitle is-6 has-text-grey-light">Total Spent</p>
+							{/if}
 						</div>
 					</div>
+
+					<!-- Budget Progress Overview -->
+					{#if !isLoading && activeBudgets > 0}
+						<div class="mt-5">
+							<h3 class="title is-5 has-text-white mb-3">Budget Overview</h3>
+							<div class="budget-overview">
+								<!-- You can add a mini progress overview here later -->
+								<p class="has-text-grey-light is-size-7">
+									You have {activeBudgets} active budget{activeBudgets !== 1 ? 's' : ''}. 
+									<a href="/Budgets" class="has-text-warning">Manage budgets</a>
+								</p>
+							</div>
+						</div>
+					{:else if !isLoading && activeBudgets === 0}
+						<div class="mt-5">
+							<div class="notification is-info is-light">
+								<div class="content">
+									<p class="has-text-weight-semibold">No active budgets yet</p>
+									<p>Create your first budget to start tracking your spending goals!</p>
+									<a href="/Budgets" class="button is-warning is-small mt-2">
+										Create Budget
+									</a>
+								</div>
+							</div>
+						</div>
+					{/if}
 				</div>
 
 				<!-- Transaction History Section -->
@@ -213,5 +320,36 @@
 	:global(.button.is-warning.is-outlined:hover) {
 		background-color: #ff3e00;
 		color: white;
+	}
+
+	:global(.notification.is-info.is-light) {
+		background-color: rgba(32, 156, 238, 0.1) !important;
+		border: 1px solid #209cee;
+		color: #209cee !important;
+	}
+
+	/* Skeleton loader for loading states */
+	.skeleton-loader {
+		width: 60px;
+		height: 36px;
+		background: linear-gradient(90deg, #333 25%, #444 50%, #333 75%);
+		background-size: 200% 100%;
+		animation: loading 1.5s infinite;
+		border-radius: 4px;
+		margin: 0 auto;
+	}
+
+	@keyframes loading {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
+	}
+
+	.budget-overview {
+		border-top: 1px solid #333;
+		padding-top: 1rem;
 	}
 </style>
