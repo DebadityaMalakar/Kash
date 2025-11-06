@@ -20,17 +20,56 @@
 
 	const googleProvider = new GoogleAuthProvider();
 
-	// Redirect if already logged in
-	onMount(() => {
-		if (getCookieValue('accessToken')) {
-			window.location.href = '/Dashboard';
-		}
+	// Check if user is already logged in and redirect
+	function checkExistingAuth() {
+		const accessToken = getCookieValue('accessToken');
+		const userLoggedIn = getCookieValue('userLoggedIn');
 		
-		onAuthStateChanged(auth, (user) => {
-			setValidationCookie('userLoggedIn', user ? 'true' : 'false');
-			// @ts-ignore
-			setValidationCookie('accessToken', user ? user.accessToken : '');
+		console.log('Login page - Cookie check:', { accessToken, userLoggedIn });
+		
+		if (accessToken && userLoggedIn === 'true') {
+			console.log('User already logged in, redirecting to dashboard');
+			window.location.href = '/Dashboard';
+			return true;
+		}
+		return false;
+	}
+
+	// Set auth cookies
+	function setAuthCookies(user: any) {
+		setValidationCookie('userLoggedIn', 'true');
+		setValidationCookie('accessToken', user.accessToken || 'firebase-auth-token');
+		setValidationCookie('userEmail', user.email || '');
+	}
+
+	// Clear auth cookies
+	function clearAuthCookies() {
+		setValidationCookie('userLoggedIn', 'false');
+		setValidationCookie('accessToken', '');
+		setValidationCookie('userEmail', '');
+	}
+
+	onMount(() => {
+		// Check if user is already authenticated
+		if (checkExistingAuth()) {
+			return;
+		}
+
+		// Clear any existing auth cookies on login page load
+		clearAuthCookies();
+
+		// Listen for auth state changes to set cookies
+		const unsubscribe = onAuthStateChanged(auth, (user) => {
+			if (user) {
+				console.log('User authenticated, setting cookies');
+				setAuthCookies(user);
+			} else {
+				console.log('User not authenticated, clearing cookies');
+				clearAuthCookies();
+			}
 		});
+
+		return () => unsubscribe();
 	});
 
 	// Email/Password authentication
@@ -41,13 +80,17 @@
 		successMessage = '';
 
 		try {
+			let userCredential;
 			if (isLoginMode) {
-				await signInWithEmailAndPassword(auth, email, password);
+				userCredential = await signInWithEmailAndPassword(auth, email, password);
 				successMessage = 'Welcome back! Redirecting...';
 			} else {
-				await createUserWithEmailAndPassword(auth, email, password);
+				userCredential = await createUserWithEmailAndPassword(auth, email, password);
 				successMessage = 'Account created successfully! Redirecting...';
 			}
+			
+			// Set cookies immediately
+			setAuthCookies(userCredential.user);
 			
 			setTimeout(() => {
 				window.location.href = '/Dashboard';
@@ -88,7 +131,11 @@
 		errorMessage = '';
 
 		try {
-			await signInWithPopup(auth, googleProvider);
+			const userCredential = await signInWithPopup(auth, googleProvider);
+			
+			// Set cookies immediately
+			setAuthCookies(userCredential.user);
+			
 			successMessage = 'Signed in with Google! Redirecting...';
 			setTimeout(() => {
 				window.location.href = '/Dashboard';
@@ -311,7 +358,6 @@
 		</div>
 	</div>
 </section>
-
 <style>
 	.hero.is-fullheight {
 		min-height: 100vh;

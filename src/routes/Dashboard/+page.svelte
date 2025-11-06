@@ -3,7 +3,7 @@
 	import { app, auth, db } from '$lib/firebase/firebase';
 	import { getAuth, onAuthStateChanged, type User } from '@firebase/auth';
 	import { doc, getDoc, collection, query, where, onSnapshot, type DocumentData } from 'firebase/firestore';
-	import { goto } from '$app/navigation';
+	import { getCookieValue } from '../../utils/cookie';
 	import Sidebar from '../../sections/Sidebar.svelte';
 	import TransactionHistory from '../../sections/Transaction-History.svelte';
 
@@ -123,23 +123,49 @@
 			loadDashboardStats();
 		} else {
 			// Redirect to login if not authenticated
-			goto('/Login');
+			console.log('No user found, redirecting to login');
+			window.location.href = '/Login';
 		}
 	}
 
 	onMount(() => {
+		// Check initial authentication state using cookies first
+		const accessToken = getCookieValue('accessToken');
+		const userLoggedIn = getCookieValue('userLoggedIn');
+		
+		console.log('Dashboard mount - Cookie check:', { accessToken, userLoggedIn });
+		
+		if (!accessToken || userLoggedIn !== 'true') {
+			console.log('No valid auth cookies, redirecting to login');
+			window.location.href = '/Login';
+			return;
+		}
+
 		// Check initial screen size
 		checkScreenSize();
 		
 		// Listen for screen resize
 		window.addEventListener('resize', checkScreenSize);
 
-		// Set initial state
+		// Set initial state from Firebase auth
 		const currentUser = getAuth(app).currentUser;
+		
+		if (!currentUser) {
+			console.log('No Firebase user, redirecting to login');
+			window.location.href = '/Login';
+			return;
+		}
+
 		updateUserInfo(currentUser);
 
 		// Listen for auth state changes
 		const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+			console.log('Auth state changed:', currentUser);
+			if (!currentUser) {
+				console.log('User signed out, redirecting to login');
+				window.location.href = '/Login';
+				return;
+			}
 			updateUserInfo(currentUser);
 		});
 
@@ -292,7 +318,7 @@
 					{#if isMobile}
 						<div class="modern-bottom-nav">
 							<nav class="bottom-nav-container">
-								<div class="bottom-nav-item {true ? 'active' : ''}">
+								<div class="bottom-nav-item active">
 									<a href="/Dashboard" class="bottom-nav-link">
 										<div class="bottom-nav-icon">
 											<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -365,6 +391,7 @@
 		</div>
 	</section>
 {/if}
+
 
 <style>
 	:global(.section) {
