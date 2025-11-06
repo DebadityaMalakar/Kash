@@ -133,7 +133,7 @@
 		const accessToken = getCookieValue('accessToken');
 		const userLoggedIn = getCookieValue('userLoggedIn');
 		
-		console.log('Dashboard mount - Cookie check:', { accessToken, userLoggedIn });
+		//console.log('Dashboard mount - Cookie check:', { accessToken, userLoggedIn });
 		
 		if (!accessToken || userLoggedIn !== 'true') {
 			console.log('No valid auth cookies, redirecting to login');

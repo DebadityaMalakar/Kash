@@ -39,24 +39,23 @@
 	function setAuthCookies(user: any) {
 		setValidationCookie('userLoggedIn', 'true');
 		setValidationCookie('accessToken', user.accessToken || 'firebase-auth-token');
-		setValidationCookie('userEmail', user.email || '');
 	}
 
 	// Clear auth cookies
 	function clearAuthCookies() {
 		setValidationCookie('userLoggedIn', 'false');
 		setValidationCookie('accessToken', '');
-		setValidationCookie('userEmail', '');
 	}
 
 	onMount(() => {
 		// Check if user is already authenticated
 		if (checkExistingAuth()) {
+			// Clear any existing auth cookies on login page load
+			clearAuthCookies();
 			return;
 		}
 
-		// Clear any existing auth cookies on login page load
-		clearAuthCookies();
+
 
 		// Listen for auth state changes to set cookies
 		const unsubscribe = onAuthStateChanged(auth, (user) => {
