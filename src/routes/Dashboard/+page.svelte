@@ -3,7 +3,7 @@
 	import { app, auth, db } from '$lib/firebase/firebase';
 	import { getAuth, onAuthStateChanged, type User } from '@firebase/auth';
 	import { doc, getDoc, collection, query, where, onSnapshot, type DocumentData } from 'firebase/firestore';
-	import { getCookieValue } from '../../utils/cookie';
+	import { goto } from '$app/navigation';
 	import Sidebar from '../../sections/Sidebar.svelte';
 	import TransactionHistory from '../../sections/Transaction-History.svelte';
 
@@ -124,46 +124,23 @@
 		} else {
 			// Redirect to login if not authenticated
 			console.log('No user found, redirecting to login');
-			window.location.href = '/Login';
+			goto('/Login');
 		}
 	}
 
 	onMount(() => {
-		// Check initial authentication state using cookies first
-		const accessToken = getCookieValue('accessToken');
-		const userLoggedIn = getCookieValue('userLoggedIn');
-		
-		//console.log('Dashboard mount - Cookie check:', { accessToken, userLoggedIn });
-		
-		if (!accessToken || userLoggedIn !== 'true') {
-			console.log('No valid auth cookies, redirecting to login');
-			window.location.href = '/Login';
-			return;
-		}
-
 		// Check initial screen size
 		checkScreenSize();
 		
 		// Listen for screen resize
 		window.addEventListener('resize', checkScreenSize);
 
-		// Set initial state from Firebase auth
-		const currentUser = getAuth(app).currentUser;
-		
-		if (!currentUser) {
-			console.log('No Firebase user, redirecting to login');
-			window.location.href = '/Login';
-			return;
-		}
-
-		updateUserInfo(currentUser);
-
 		// Listen for auth state changes
 		const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
 			console.log('Auth state changed:', currentUser);
 			if (!currentUser) {
 				console.log('User signed out, redirecting to login');
-				window.location.href = '/Login';
+				goto('/Login');
 				return;
 			}
 			updateUserInfo(currentUser);
@@ -391,7 +368,6 @@
 		</div>
 	</section>
 {/if}
-
 
 <style>
 	:global(.section) {
