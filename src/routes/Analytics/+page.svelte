@@ -18,6 +18,8 @@
 	// User state
 	let user: User | null = null;
 	let userCurrency = 'INR';
+	let encryptionKey: CryptoKey | null = null;
+	let isEncryptionInitialized = false;
 
 	// Analytics state
 	let transactions: DocumentData[] = [];
@@ -58,6 +60,154 @@
 		'Other'
 	];
 
+	// Encryption functions
+	async function generateEncryptionKey(): Promise<CryptoKey> {
+		return await crypto.subtle.generateKey(
+			{
+				name: 'AES-GCM',
+				length: 256,
+			},
+			true,
+			['encrypt', 'decrypt']
+		);
+	}
+
+	async function exportKey(key: CryptoKey): Promise<string> {
+		const exported = await crypto.subtle.exportKey('raw', key);
+		const exportedKeyBuffer = new Uint8Array(exported);
+		return btoa(String.fromCharCode(...exportedKeyBuffer));
+	}
+
+	async function importKey(keyString: string): Promise<CryptoKey> {
+		const keyBuffer = Uint8Array.from(atob(keyString), c => c.charCodeAt(0));
+		return await crypto.subtle.importKey(
+			'raw',
+			keyBuffer,
+			{
+				name: 'AES-GCM',
+				length: 256,
+			},
+			true,
+			['encrypt', 'decrypt']
+		);
+	}
+
+	// Get master key from environment or generate derived key
+	async function getMasterKey(): Promise<CryptoKey> {
+		const envKey = import.meta.env.VITE_PUBLIC_ENCRYPT_KEY;
+		
+		if (envKey) {
+			const encoder = new TextEncoder();
+			const keyMaterial = encoder.encode(envKey + (user?.uid || ''));
+			
+			const baseKey = await crypto.subtle.importKey(
+				'raw',
+				keyMaterial,
+				'PBKDF2',
+				false,
+				['deriveKey']
+			);
+			
+			return await crypto.subtle.deriveKey(
+				{
+					name: 'PBKDF2',
+					salt: encoder.encode('kash-encryption-salt'),
+					iterations: 100000,
+					hash: 'SHA-256'
+				},
+				baseKey,
+				{
+					name: 'AES-GCM',
+					length: 256
+				},
+				true,
+				['encrypt', 'decrypt']
+			);
+		} else {
+			return await generateEncryptionKey();
+		}
+	}
+
+	async function decryptData(encryptedData: string, iv: string): Promise<string> {
+		if (!encryptionKey) {
+			throw new Error('Encryption key not available');
+		}
+
+		const encryptedBuffer = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+		const ivBuffer = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+
+		const decryptedBuffer = await crypto.subtle.decrypt(
+			{
+				name: 'AES-GCM',
+				iv: ivBuffer,
+			},
+			encryptionKey,
+			encryptedBuffer
+		);
+
+		const decoder = new TextDecoder();
+		return decoder.decode(decryptedBuffer);
+	}
+
+	// Initialize or load encryption key
+	async function initializeEncryption() {
+		if (!user) return;
+
+		try {
+			const storageKey = `encryptionKey_${user.uid}`;
+			const storedKey = localStorage.getItem(storageKey);
+
+			if (storedKey) {
+				encryptionKey = await importKey(storedKey);
+				isEncryptionInitialized = true;
+			} else {
+				isEncryptionInitialized = false;
+				errorMessage = 'Encryption key not found. Please import your key in Profile settings.';
+			}
+		} catch (error) {
+			console.error('Error initializing encryption:', error);
+			isEncryptionInitialized = false;
+			errorMessage = 'Failed to initialize encryption. Please check your key.';
+		}
+	}
+
+	// Decrypt transaction data
+	async function decryptTransaction(transaction: any): Promise<any> {
+		try {
+			let decryptedAmount = transaction.amountPlain;
+			let decryptedDate = transaction.datePlain;
+
+			// Try to decrypt amount if encrypted fields exist
+			if (transaction.amount && transaction.amountIv) {
+				try {
+					decryptedAmount = parseFloat(await decryptData(transaction.amount, transaction.amountIv));
+				} catch (error) {
+					console.warn('Failed to decrypt amount, using plain value:', error);
+				}
+			}
+
+			// Try to decrypt date if encrypted fields exist
+			if (transaction.date && transaction.dateIv) {
+				try {
+					const decryptedDateStr = await decryptData(transaction.date, transaction.dateIv);
+					decryptedDate = Timestamp.fromDate(new Date(decryptedDateStr));
+				} catch (error) {
+					console.warn('Failed to decrypt date, using plain value:', error);
+				}
+			}
+
+			return {
+				...transaction,
+				amount: decryptedAmount,
+				date: decryptedDate
+			};
+		} catch (error) {
+			console.error('Error decrypting transaction:', error);
+			// Return original transaction if decryption fails
+			return transaction;
+		}
+	}
+
 	// Check screen size
 	function checkScreenSize() {
 		isMobile = window.innerWidth < 1024;
@@ -83,8 +233,8 @@
 		return currencySymbols[currencyCode] || currencyCode;
 	}
 
-	// Load transactions from Firestore
-	function loadTransactions() {
+	// Load transactions from Firestore with decryption
+	async function loadTransactions() {
 		if (!user) return;
 
 		isLoading = true;
@@ -92,19 +242,36 @@
 		const q = query(transactionsRef);
 
 		const unsubscribe = onSnapshot(q, 
-			(snapshot) => {
-				transactions = snapshot.docs.map(doc => ({ 
-					id: doc.id, 
-					...doc.data() 
-				}));
-				// Calculate metrics and data
-				metrics = calculateMetrics();
-				categoryData = aggregateByCategory();
-				isLoading = false;
-				// Create charts after data is loaded
-				setTimeout(() => {
-					createCharts();
-				}, 100);
+			async (snapshot) => {
+				try {
+					const rawTransactions = snapshot.docs.map(doc => ({ 
+						id: doc.id, 
+						...doc.data() 
+					}));
+
+					// Decrypt all transactions
+					const decryptedTransactions = [];
+					for (const transaction of rawTransactions) {
+						const decryptedTransaction = await decryptTransaction(transaction);
+						decryptedTransactions.push(decryptedTransaction);
+					}
+
+					transactions = decryptedTransactions;
+					
+					// Calculate metrics and data
+					metrics = calculateMetrics();
+					categoryData = aggregateByCategory();
+					
+					// Create charts after data is loaded
+					setTimeout(() => {
+						createCharts();
+					}, 100);
+				} catch (error) {
+					console.error('Error processing transactions:', error);
+					errorMessage = 'Failed to decrypt transaction data. Please check your encryption key.';
+				} finally {
+					isLoading = false;
+				}
 			},
 			(error) => {
 				console.error('Error loading transactions:', error);
@@ -531,14 +698,27 @@
 		checkScreenSize();
 		window.addEventListener('resize', checkScreenSize);
 
-		const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+		const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
 			user = currentUser;
 			if (user) {
-				loadUserCurrency();
-				loadTransactions();
+				try {
+					await loadUserCurrency();
+					await initializeEncryption();
+					if (isEncryptionInitialized) {
+						loadTransactions();
+					} else {
+						isLoading = false;
+					}
+				} catch (error) {
+					console.error('Error initializing user session:', error);
+					errorMessage = 'Failed to initialize analytics. Please try refreshing.';
+					isLoading = false;
+				}
 			} else {
 				transactions = [];
 				isLoading = false;
+				encryptionKey = null;
+				isEncryptionInitialized = false;
 			}
 		});
 
@@ -585,6 +765,23 @@
 						<h1 class="title is-2 has-text-white mb-6">Analytics Dashboard</h1>
 					{/if}
 
+					<!-- Encryption Status -->
+					{#if user && !isEncryptionInitialized && !isLoading}
+						<div class="notification is-warning is-light mb-4">
+							<div class="content has-text-centered">
+								<p class="has-text-weight-semibold">
+									⚠️ Encryption Not Initialized
+								</p>
+								<p class="is-size-7 has-text-grey">
+									Please import your encryption key in Profile settings to view analytics.
+								</p>
+								<a href="/Profile" class="button is-warning is-small mt-2">
+									Go to Profile
+								</a>
+							</div>
+						</div>
+					{/if}
+
 					<!-- Error Message -->
 					{#if errorMessage}
 						<div class="notification is-danger">
@@ -594,7 +791,7 @@
 					{/if}
 
 					<!-- Key Metrics -->
-					{#if !isLoading && transactions.length > 0 && metrics}
+					{#if !isLoading && transactions.length > 0 && metrics && isEncryptionInitialized}
 						<div class="columns is-mobile has-text-centered mb-6">
 							<div class="column {isMobile ? 'is-6' : ''}">
 								<div class="box has-background-success-light">
@@ -634,7 +831,22 @@
 					<!-- Charts Grid -->
 					{#if isLoading}
 						<div class="has-text-centered py-6">
-							<p class="has-text-grey-light">Loading analytics data...</p>
+							<p class="has-text-grey-light">
+								{#if !isEncryptionInitialized}
+									Initializing encryption...
+								{:else}
+									Loading analytics data...
+								{/if}
+							</p>
+						</div>
+					{:else if !isEncryptionInitialized}
+						<div class="has-text-centered py-6">
+							<div class="content has-text-centered">
+								<p class="has-text-grey-light mb-3">Encryption not available. Please import your key to view analytics.</p>
+								<a href="/Profile" class="button is-warning {isMobile ? 'is-small' : ''}">
+									Import Encryption Key
+								</a>
+							</div>
 						</div>
 					{:else if transactions.length === 0}
 						<div class="has-text-centered py-6">
@@ -836,6 +1048,11 @@
 	:global(.box.has-background-warning-light) {
 		background-color: rgba(255, 62, 0, 0.1) !important;
 		border: 1px solid #ff3e00;
+	}
+
+	:global(.notification.is-warning.is-light) {
+		background-color: rgba(255, 193, 7, 0.1) !important;
+		border: 1px solid #ffc107;
 	}
 
 	:global(.button.is-warning) {

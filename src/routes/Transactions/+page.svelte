@@ -17,6 +17,8 @@
 	// User state
 	let user: User | null = null;
 	let userCurrency = 'INR';
+	let encryptionKey: CryptoKey | null = null;
+	let isEncryptionInitialized = false;
 
 	// Transactions state
 	let transactions: DocumentData[] = [];
@@ -32,6 +34,13 @@
 
 	// Mobile state
 	let isMobile = false;
+
+	// Key management state
+	let showKeyExportModal = false;
+	let exportedKeyString = '';
+	let importKeyString = '';
+	let isExportingKey = false;
+	let isImportingKey = false;
 
 	// Available categories (same as in Add Data)
 	const categories = [
@@ -63,6 +72,163 @@
 		'CHF': 'CHF', 'BTC': '₿', 'ETH': 'Ξ'
 	};
 
+	// Encryption functions
+	async function generateEncryptionKey(): Promise<CryptoKey> {
+		return await crypto.subtle.generateKey(
+			{
+				name: 'AES-GCM',
+				length: 256,
+			},
+			true,
+			['encrypt', 'decrypt']
+		);
+	}
+
+	async function exportKey(key: CryptoKey): Promise<string> {
+		const exported = await crypto.subtle.exportKey('raw', key);
+		const exportedKeyBuffer = new Uint8Array(exported);
+		return btoa(String.fromCharCode(...exportedKeyBuffer));
+	}
+
+	async function importKey(keyString: string): Promise<CryptoKey> {
+		const keyBuffer = Uint8Array.from(atob(keyString), c => c.charCodeAt(0));
+		return await crypto.subtle.importKey(
+			'raw',
+			keyBuffer,
+			{
+				name: 'AES-GCM',
+				length: 256,
+			},
+			true,
+			['encrypt', 'decrypt']
+		);
+	}
+
+	// Get master key from environment or generate derived key
+	async function getMasterKey(): Promise<CryptoKey> {
+		const envKey = import.meta.env.VITE_PUBLIC_ENCRYPT_KEY;
+		
+		if (envKey) {
+			const encoder = new TextEncoder();
+			const keyMaterial = encoder.encode(envKey + (user?.uid || ''));
+			
+			const baseKey = await crypto.subtle.importKey(
+				'raw',
+				keyMaterial,
+				'PBKDF2',
+				false,
+				['deriveKey']
+			);
+			
+			return await crypto.subtle.deriveKey(
+				{
+					name: 'PBKDF2',
+					salt: encoder.encode('kash-encryption-salt'),
+					iterations: 100000,
+					hash: 'SHA-256'
+				},
+				baseKey,
+				{
+					name: 'AES-GCM',
+					length: 256
+				},
+				true,
+				['encrypt', 'decrypt']
+			);
+		} else {
+			return await generateEncryptionKey();
+		}
+	}
+
+	async function decryptData(encryptedData: string, iv: string): Promise<string> {
+		if (!encryptionKey) {
+			throw new Error('Encryption key not available');
+		}
+
+		const encryptedBuffer = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+		const ivBuffer = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+
+		const decryptedBuffer = await crypto.subtle.decrypt(
+			{
+				name: 'AES-GCM',
+				iv: ivBuffer,
+			},
+			encryptionKey,
+			encryptedBuffer
+		);
+
+		const decoder = new TextDecoder();
+		return decoder.decode(decryptedBuffer);
+	}
+
+	// Initialize or load encryption key
+	async function initializeEncryption() {
+		if (!user) return;
+
+		try {
+			const storageKey = `encryptionKey_${user.uid}`;
+			const storedKey = localStorage.getItem(storageKey);
+
+			if (storedKey) {
+				encryptionKey = await importKey(storedKey);
+			} else {
+				encryptionKey = await getMasterKey();
+				const exportedKey = await exportKey(encryptionKey);
+				localStorage.setItem(storageKey, exportedKey);
+			}
+			
+			isEncryptionInitialized = true;
+		} catch (error) {
+			console.error('Error initializing encryption:', error);
+			isEncryptionInitialized = false;
+			throw new Error('Failed to initialize encryption');
+		}
+	}
+
+	// Key export functionality
+	async function exportEncryptionKey() {
+		if (!encryptionKey || !user) return;
+		
+		isExportingKey = true;
+		try {
+			exportedKeyString = await exportKey(encryptionKey);
+			showKeyExportModal = true;
+		} catch (error) {
+			console.error('Error exporting key:', error);
+			errorMessage = 'Failed to export encryption key';
+		} finally {
+			isExportingKey = false;
+		}
+	}
+
+	// Key import functionality
+	async function importEncryptionKey() {
+		if (!user || !importKeyString.trim()) return;
+		
+		isImportingKey = true;
+		try {
+			const testKey = await importKey(importKeyString.trim());
+			
+			const storageKey = `encryptionKey_${user.uid}`;
+			localStorage.setItem(storageKey, importKeyString.trim());
+			
+			encryptionKey = testKey;
+			isEncryptionInitialized = true;
+			
+			successMessage = 'Encryption key imported successfully!';
+			showKeyExportModal = false;
+			importKeyString = '';
+			
+			// Reload transactions with new key
+			loadTransactions();
+		} catch (error) {
+			console.error('Error importing key:', error);
+			errorMessage = 'Invalid encryption key format';
+		} finally {
+			isImportingKey = false;
+		}
+	}
+
 	// Check screen size
 	function checkScreenSize() {
 		isMobile = window.innerWidth < 1024;
@@ -83,22 +249,74 @@
 		}
 	}
 
-	// Load transactions from Firestore
-	function loadTransactions() {
+	// Decrypt transaction data
+	async function decryptTransaction(transaction: any): Promise<any> {
+		try {
+			let decryptedAmount = transaction.amountPlain;
+			let decryptedDate = transaction.datePlain;
+
+			// Try to decrypt amount if encrypted fields exist
+			if (transaction.amount && transaction.amountIv) {
+				try {
+					decryptedAmount = parseFloat(await decryptData(transaction.amount, transaction.amountIv));
+				} catch (error) {
+					console.warn('Failed to decrypt amount, using plain value:', error);
+				}
+			}
+
+			// Try to decrypt date if encrypted fields exist
+			if (transaction.date && transaction.dateIv) {
+				try {
+					const decryptedDateStr = await decryptData(transaction.date, transaction.dateIv);
+					decryptedDate = Timestamp.fromDate(new Date(decryptedDateStr));
+				} catch (error) {
+					console.warn('Failed to decrypt date, using plain value:', error);
+				}
+			}
+
+			return {
+				...transaction,
+				amount: decryptedAmount,
+				date: decryptedDate
+			};
+		} catch (error) {
+			console.error('Error decrypting transaction:', error);
+			// Return original transaction if decryption fails
+			return transaction;
+		}
+	}
+
+	// Load transactions from Firestore with decryption
+	async function loadTransactions() {
 		if (!user) return;
 
 		isLoading = true;
 		const transactionsRef = collection(db, 'users', user.uid, 'transactions');
-		const q = query(transactionsRef, orderBy('date', 'desc'));
+		const q = query(transactionsRef, orderBy('datePlain', 'desc'));
 
 		const unsubscribe = onSnapshot(q, 
-			(snapshot) => {
-				transactions = snapshot.docs.map(doc => ({ 
-					id: doc.id, 
-					...doc.data() 
-				}));
-				applyFilters();
-				isLoading = false;
+			async (snapshot) => {
+				try {
+					const rawTransactions = snapshot.docs.map(doc => ({ 
+						id: doc.id, 
+						...doc.data() 
+					}));
+
+					// Decrypt all transactions
+					const decryptedTransactions = [];
+					for (const transaction of rawTransactions) {
+						const decryptedTransaction = await decryptTransaction(transaction);
+						decryptedTransactions.push(decryptedTransaction);
+					}
+
+					transactions = decryptedTransactions;
+					applyFilters();
+				} catch (error) {
+					console.error('Error processing transactions:', error);
+					errorMessage = 'Failed to load transactions. Please check your encryption key.';
+				} finally {
+					isLoading = false;
+				}
 			},
 			(error) => {
 				console.error('Error loading transactions:', error);
@@ -235,15 +453,24 @@
 		checkScreenSize();
 		window.addEventListener('resize', checkScreenSize);
 
-		const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+		const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
 			user = currentUser;
 			if (user) {
-				loadUserCurrency();
-				loadTransactions();
+				try {
+					await loadUserCurrency();
+					await initializeEncryption();
+					loadTransactions();
+				} catch (error) {
+					console.error('Error initializing user session:', error);
+					errorMessage = 'Failed to initialize. Please try refreshing.';
+					isLoading = false;
+				}
 			} else {
 				transactions = [];
 				filteredTransactions = [];
 				isLoading = false;
+				encryptionKey = null;
+				isEncryptionInitialized = false;
 			}
 		});
 
@@ -295,6 +522,33 @@
 									<span class="icon">➕</span>
 									<span>Add Transaction</span>
 								</a>
+							</div>
+						</div>
+					{/if}
+
+					<!-- Encryption Status -->
+					{#if user}
+						<div class="notification {isEncryptionInitialized ? 'is-success' : 'is-warning'} is-light mb-4">
+							<div class="content has-text-centered">
+								<p class="has-text-weight-semibold">
+									{isEncryptionInitialized ? '🔒' : '⚠️'} Data Encryption: 
+									<span class="tag {isEncryptionInitialized ? 'is-success' : 'is-warning'} is-medium">
+										{isEncryptionInitialized ? 'Active' : 'Initializing...'}
+									</span>
+								</p>
+								<p class="is-size-7 has-text-grey">
+									{isEncryptionInitialized 
+										? 'Amount and date fields are decrypted for display'
+										: 'Setting up decryption system...'}
+								</p>
+								<div class="buttons is-centered mt-2">
+									<button class="button is-small is-info" on:click={exportEncryptionKey} disabled={isExportingKey}>
+										{isExportingKey ? 'Exporting...' : '🔑 Export Key'}
+									</button>
+									<button class="button is-small is-warning" on:click={() => showKeyExportModal = true}>
+										📥 Import Key
+									</button>
+								</div>
 							</div>
 						</div>
 					{/if}
@@ -389,7 +643,7 @@
 					</div>
 
 					<!-- Summary Cards -->
-					{#if !isLoading && filteredTransactions.length > 0}
+					{#if !isLoading && filteredTransactions.length > 0 && isEncryptionInitialized}
 						{@const totals = calculateTotals()}
 						<div class="columns is-mobile has-text-centered mb-5">
 							<div class="column">
@@ -441,6 +695,15 @@
 						{#if isLoading}
 							<div class="has-text-centered py-6">
 								<p class="has-text-grey-light">Loading transactions...</p>
+							</div>
+						{:else if !isEncryptionInitialized}
+							<div class="has-text-centered py-6">
+								<div class="content has-text-centered">
+									<p class="has-text-grey-light mb-3">Encryption not initialized.</p>
+									<button class="button is-warning {isMobile ? 'is-small' : ''}" on:click={() => showKeyExportModal = true}>
+										Import Encryption Key
+									</button>
+								</div>
 							</div>
 						{:else if filteredTransactions.length === 0}
 							<div class="has-text-centered py-6">
@@ -576,6 +839,83 @@
 		</div>
 	</div>
 </section>
+
+<!-- Key Management Modal -->
+{#if showKeyExportModal}
+<div class="modal is-active">
+	<div class="modal-background" on:click={() => showKeyExportModal = false}></div>
+	<div class="modal-card">
+		<header class="modal-card-head has-background-black">
+			<p class="modal-card-title has-text-white">🔑 Encryption Key Management</p>
+			<button class="delete" aria-label="close" on:click={() => showKeyExportModal = false}></button>
+		</header>
+		<section class="modal-card-body has-background-grey-darker">
+			{#if exportedKeyString}
+				<div class="content has-text-white">
+					<h3 class="has-text-warning">Export Encryption Key</h3>
+					<p class="has-text-grey-light is-size-7">
+						Save this key securely! You'll need it to access your data on other devices.
+						<strong>Keep it private and never share it.</strong>
+					</p>
+					<div class="field">
+						<label class="label has-text-white">Your Encryption Key:</label>
+						<div class="control">
+							<textarea 
+								class="textarea has-background-dark has-text-white" 
+								readonly
+								rows="4"
+								value={exportedKeyString}
+							></textarea>
+						</div>
+					</div>
+					<div class="buttons">
+						<button class="button is-warning" on:click={() => {
+							navigator.clipboard.writeText(exportedKeyString);
+							successMessage = 'Key copied to clipboard!';
+							showKeyExportModal = false;
+						}}>
+							📋 Copy to Clipboard
+						</button>
+						<button class="button is-text has-text-grey-light" on:click={() => exportedKeyString = ''}>
+							Close
+						</button>
+					</div>
+				</div>
+			{:else}
+				<div class="content has-text-white">
+					<h3 class="has-text-info">Import Encryption Key</h3>
+					<p class="has-text-grey-light is-size-7">
+						Paste your encryption key to access your data on this device.
+					</p>
+					<div class="field">
+						<label class="label has-text-white">Encryption Key:</label>
+						<div class="control">
+							<textarea 
+								class="textarea has-background-dark has-text-white" 
+								placeholder="Paste your encryption key here..."
+								bind:value={importKeyString}
+								rows="4"
+							></textarea>
+						</div>
+					</div>
+					<div class="buttons">
+						<button 
+							class="button is-success {isImportingKey ? 'is-loading' : ''}" 
+							on:click={importEncryptionKey}
+							disabled={!importKeyString.trim() || isImportingKey}
+						>
+							📥 Import Key
+						</button>
+						<button class="button is-text has-text-grey-light" on:click={() => showKeyExportModal = false}>
+							Cancel
+						</button>
+					</div>
+				</div>
+			{/if}
+		</section>
+	</div>
+</div>
+{/if}
 
 <style>
 	:global(.section) {
@@ -770,6 +1110,26 @@
 		height: 4px;
 		background: #ff3e00;
 		border-radius: 50%;
+	}
+
+	/* Modal Styles */
+	.modal-card {
+		border: 1px solid #333;
+		border-radius: 6px;
+	}
+	
+	.textarea.has-background-dark {
+		background-color: #1a1a1a !important;
+		border-color: #444;
+		color: white !important;
+		font-family: monospace;
+		font-size: 0.875rem;
+	}
+
+	:global(.button.is-success) {
+		background-color: #2ecc71;
+		border-color: #2ecc71;
+		color: white;
 	}
 
 	/* Mobile optimizations */

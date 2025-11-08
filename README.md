@@ -166,10 +166,11 @@ These pages are resource-light and don't require heavy JavaScript, making them p
 ## 🔮 Upcoming Features
 
 - [ ] Signup page completion
-- [ ] Budget creation and management
+- [x] Budget creation and management
 - [ ] AI prediction integration
-- [ ] Analytics and reporting
-- [ ] Transaction categories management
+- [X] Analytics and reporting
+- [X] Transaction categories management
+- [X] End-to-End encryption of your spendings so not even we can figure out your data, only you have control over it.
 
 ## 🔒 Backend Services
 
